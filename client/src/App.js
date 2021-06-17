@@ -1,74 +1,113 @@
 import React, { Component } from "react";
 import SimpleStorageContract from "./contracts/SimpleStorage.json";
-import getWeb3 from "./getWeb3";
+import Web3 from "web3";
 import ipfs from "./ipfs";
+
 
 import "./App.css";
 
 class App extends Component {
-  state = { storageValue: 0, web3: null, accounts: null, contract: null };
 
-  componentDidMount = async () => {
-    try {
-      // Get network provider and web3 instance.
-      const web3 = await getWeb3();
+  async componentWillMount() {
+    await this.loadWeb3()
+    await this.loadBlockchainData()
+  }
 
-      // Use web3 to get the user's accounts.
-      const accounts = await web3.eth.getAccounts();
-
-      // Get the contract instance.
-      const networkId = await web3.eth.net.getId();
-      const deployedNetwork = SimpleStorageContract.networks[networkId];
-      const instance = new web3.eth.Contract(
-        SimpleStorageContract.abi,
-        deployedNetwork && deployedNetwork.address,
-      );
-
-      // Set web3, accounts, and contract to the state, and then proceed with an
-      // example of interacting with the contract's methods.
-      this.setState({ web3, accounts, contract: instance }, this.runExample);
-    } catch (error) {
-      // Catch any errors for any of the above operations.
-      alert(
-        `Failed to load web3, accounts, or contract. Check console for details.`,
-      );
-      console.error(error);
+  async loadWeb3() {
+    if (window.ethereum) {
+      window.web3 = new Web3(window.ethereum)
+      await window.ethereum.enable()
     }
-  };
+    else if (window.web3) {
+      window.web3 = new Web3(window.web3.currentProvider)
+    }
+    else {
+      window.alert('Non-Ethereum browser detected. You should consider trying MetaMask!')
+    }
+  }
 
-  runExample = async () => {
-    const { accounts, contract } = this.state;
+  async loadBlockchainData() {
+    const web3 = window.web3
+    // Load account
+    const accounts = await web3.eth.getAccounts()
+    this.setState({ account : accounts[0] })
+    const networkId = await web3.eth.net.getId()
+    const networkData = SimpleStorageContract.networks[networkId]
+    if(networkData) {
+      const contract = web3.eth.Contract(SimpleStorageContract.abi, networkData.address)
+      this.setState({ contract })
+      const ipfsHash = await contract.methods.get().call()
+      this.setState({ ipfsHash })
+    } else {
+      window.alert('Smart contract not deployed to detected network.')
+    }
+  }
 
-    // Stores a given value, 5 by default.
-    await contract.methods.set(5).send({ from: accounts[0] });
+  constructor(props) {
+    super(props)
 
-    // Get the value from the contract to prove it worked.
-    const response = await contract.methods.get().call();
+    this.state = {
+      ipfsHash: '',
+      contract: null,
+      web3: null,
+      buffer: null,
+      account: null
+    }
+  }
 
-    // Update state with the result.
-    this.setState({ storageValue: response });
-  };
+  captureFile = (event) => {
+    event.preventDefault()
+    const file = event.target.files[0]
+    const reader = new window.FileReader()
+    reader.readAsArrayBuffer(file)
+    reader.onloadend = () => {
+      this.setState({ buffer: Buffer(reader.result) })
+      console.log('buffer', this.state.buffer)
+    }
+  }
 
+  onSubmit = (event) => {
+    event.preventDefault()
+    console.log("Submitting file to ipfs...")
+    ipfs.add(this.state.buffer, (error, result) => {
+      console.log('Ipfs result', result)
+      if(error) {
+        console.error(error)
+        return
+      }
+       this.state.contract.methods.set(result[0].hash).send({ from: this.state.account }).then((r) => {
+         return this.setState({ ipfsHash : result[0].hash })
+       })
+    })
+  }
   render() {
-    if (!this.state.web3) {
-      return <div>Loading Web3, accounts, and contract...</div>;
-    }
     return (
       <div className="App">
-        <h1>Good to Go!</h1>
-        <p>Your Truffle Box is installed and ready.</p>
-        <h2>Smart Contract Example</h2>
-        <p>
-          If your contracts compiled and migrated successfully, below will show
-          a stored value of 5 (by default).
-        </p>
-        <p>
-          Try changing the value stored on <strong>line 42</strong> of App.js.
-        </p>
-        <div>The stored value is: {this.state.storageValue}</div>
+          <nav className="navbar navbar-dark fixed-top bg-dark flex-md-nowrap p-0 shadow">
+          <a
+            className="navbar-brand col-sm-3 col-md-2 mr-0"
+          >
+            IPFS File Upload
+          </a>
+        </nav>
+
+        <main className="container">
+          <div className="pure-g">
+            <div className="pure-u-1-1">
+              <h1>Your Image</h1>
+              <p>This image is stored on IPFS & The Ethereum Blockchain!</p>
+              <img src={`https://ipfs.io/ipfs/${this.state.ipfsHash}`} alt=""/>
+              <h2>Upload Image</h2>
+              <form onSubmit={this.onSubmit} >
+                <input type='file' onChange={this.captureFile} />
+                <input type='submit' />
+              </form>
+            </div>
+          </div>
+        </main>
       </div>
     );
   }
 }
 
-export default App;
+export default App
